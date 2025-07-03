@@ -26,6 +26,6 @@ Pkg.add(url="https://github.com/RuwenSchulz/IdealHydrodynamics.jl")
 
 Here is an example result of the Sod shock tube simulation:
 
-![Shock tube simulation](https://github.com/RuwenSchulz/IdealHydrodynamics.jl/preview/sod_shock.png)
+![Shock tube simulation](https://github.com/RuwenSchulz/IdealHydrodynamics.jl/raw/main/assets/sod_shock.png)
 
 ---
