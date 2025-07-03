@@ -27,3 +27,4 @@ Here is an example result of the Sod shock tube simulation:
 
 ![Shock tube simulation](https://github.com/RuwenSchulz/IdealHydrodynamics.jl/preview/sod_shock.png)
 
+---
