@@ -1,69 +1,69 @@
-using DifferentialEquations, NLsolve, Plots, LeastSquaresOptim, LsqFit,Statistics, Optim, Interpolations, LinearAlgebra, BenchmarkTools, StaticArrays, Printf
+using DifferentialEquations, NLsolve, Plots, LeastSquaresOptim, LsqFit,
+      Statistics, Optim, Interpolations, LinearAlgebra, BenchmarkTools,
+      StaticArrays, Printf
 
-gamma = 5/3    # Adiabatic index
+# -------------------------
+# Problem Setup & Constants
+# -------------------------
 
-#Lorentz factor
-@inline  function γ(v)
-    return 1.0 ./sqrt.(1 .-(v .^2))
-end 
+gamma = 5/3  # Adiabatic index for ideal gas
 
-# Equation of state (EoS)
-@inline  function P(e)
+# Lorentz factor: γ = 1 / sqrt(1 - v^2)
+@inline function γ(v)
+    return 1.0 ./ sqrt.(1 .- (v .^ 2))
+end
+
+# Ideal gas equation of state (pressure as function of energy density)
+@inline function P(e)
     return (gamma - 1) * e
 end
 
-#inverse EoS
-@inline  global function e(P)
-    return P/(gamma-1)
-end 
-
-@inline  function T00_fun!(result,n,P,v)
-    result .= -P  .+ (P  .+ e(P)) .* γ(v)  .^2
+# Inverse of equation of state: energy density from pressure
+@inline global function e(P)
+    return P / (gamma - 1)
 end
 
-@inline  function T10_fun!(result,n,P,v) 
-    result .= v .*(P  .+ e(P)) .* γ(v)  .^2
-end 
+# ------------------------------
+# Energy-Momentum and Currents
+# ------------------------------
 
-@inline  function T01_fun!(result,n,P,v) 
-    result .= v .*(P  .+ e(P)) .* γ(v)  .^2
+# Tμν components and current densities (relativistic expressions)
+
+@inline function T00_fun!(result, n, P, v)
+    result .= -P .+ (P .+ e(P)) .* γ(v).^2
 end
 
-@inline  function T11_fun!(result,n,P,v)
-    result .= P  .+ v .^2 .*(P  .+ e(P)) .* γ(v)  .^2
+@inline function T10_fun!(result, n, P, v)
+    result .= v .* (P .+ e(P)) .* γ(v).^2
 end
 
-@inline  function J0_fun!(result,n,P,v) 
-    result .= n .* γ(v) 
+@inline function T01_fun!(result, n, P, v)
+    result .= v .* (P .+ e(P)) .* γ(v).^2
 end
 
-@inline  function J1_fun!(result,n,P,v) 
-    result .= n .*v .* γ(v) 
+@inline function T11_fun!(result, n, P, v)
+    result .= P .+ v.^2 .* (P .+ e(P)) .* γ(v).^2
 end
 
-@inline  function T00_fun(n,P,v)
-    return -P  .+ (P  .+ e(P)) .* γ(v)  .^2
-end 
-
-@inline  function T10_fun(n,P,v)
-    return v .*(P  .+ e(P)) .* γ(v)  .^2
-end 
-
-@inline  function T01_fun(n,P,v)
-    return v .*(P  .+ e(P)) .* γ(v)  .^2
-end 
-
-@inline  function T11_fun(n,P,v)
-    return P  .+ v .^2 .*(P  .+ e(P)) .* γ(v)  .^2
-end 
-
-@inline  function J0_fun(n,P,v)
-    return n .* γ(v) 
-end 
-
-@inline  function J1_fun(n,P,v)
-    return n .*v .* γ(v) 
+@inline function J0_fun!(result, n, P, v)
+    result .= n .* γ(v)
 end
+
+@inline function J1_fun!(result, n, P, v)
+    result .= n .* v .* γ(v)
+end
+
+# Non-mutating versions (return new arrays)
+@inline T00_fun(n, P, v) = -P .+ (P .+ e(P)) .* γ(v).^2
+@inline T10_fun(n, P, v) = v .* (P .+ e(P)) .* γ(v).^2
+@inline T01_fun(n, P, v) = v .* (P .+ e(P)) .* γ(v).^2
+@inline T11_fun(n, P, v) = P .+ v.^2 .* (P .+ e(P)) .* γ(v).^2
+@inline J0_fun(n, P, v) = n .* γ(v)
+@inline J1_fun(n, P, v) = n .* v .* γ(v)
+
+# ---------------------
+# Structs for Clarity
+# ---------------------
 
 struct HydroState
     n::Vector{Float64}
@@ -79,25 +79,31 @@ end
 
 struct FluxVars
     F1::Vector{Float64}  # Momentum flux (T10)
-    F2::Vector{Float64}  # Stress tensor component (T11)
+    F2::Vector{Float64}  # Stress (T11)
     F3::Vector{Float64}  # Charge flux (J1)
 end
 
-@inline function fluxes_from_state(n,P,v)
-    return T10_fun(n,P,v), T11_fun(n,P,v), J1_fun(n,P,v)
+
+# ---------------------------
+# Flux & State Conversion
+# ---------------------------
+
+@inline fluxes_from_state(n, P, v) = (T10_fun(n, P, v), T11_fun(n, P, v), J1_fun(n, P, v))
+
+@inline function fluxes_from_conserved(Q1, Q2, Q3)
+    n, P, v = primitive_from_conserved(Q1, Q2, Q3)
+    return fluxes_from_state(n, P, v)
 end
 
-@inline function fluxes_from_conserved(Q1,Q2,Q3)
-    n,P,v = primitive_from_conserved(Q1,Q2,Q3)
-    return T10_fun(n,P,v),T11_fun(n,P,v),J1_fun(n,P,v)
+@inline function conserved_from_state(state::HydroState)
+    return (T00_fun(state.n, state.P, state.v),
+            T01_fun(state.n, state.P, state.v),
+            J0_fun(state.n, state.P, state.v))
 end
 
-@inline function conserved_from_state(current_state)
-    n=current_state.n
-    P=current_state.P
-    v=current_state.v
-    return T00_fun(n,P,v),T01_fun(n,P,v),J0_fun(n,P,v)
-end
+# ----------------------------------
+# Primitive Variable Inversion (NR)
+# ----------------------------------
 
 @inline function primitive_from_conserved(Q1,Q2,Q3)
     local_Nx = length(Q1)
@@ -140,6 +146,10 @@ end
     return n,P,v
 end
 
+# -------------------
+# Rusanov Flux (1D)
+# -------------------
+
 function rusanov_flux(Q1_L, Q2_L, Q3_L, Q1_R, Q2_R, Q3_R)
     nL, PL, vL = primitive_from_conserved(Q1_L, Q2_L, Q3_L)
     nR, PR, vR = primitive_from_conserved(Q1_R, Q2_R, Q3_R)
@@ -166,83 +176,77 @@ function rusanov_flux(Q1_L, Q2_L, Q3_L, Q1_R, Q2_R, Q3_R)
     return F1, F2, F3
 end
 
+# ----------------------
+# Initial Conditions
+# ----------------------
+
 function initialize_state(Nx)
-    n  = fill(1., Nx)
-    P = fill(1., Nx)
-    v  = fill(0.0001, Nx)
+    n = fill(1.0, Nx)
+    P = fill(1.0, Nx)
+    v = fill(1e-10, Nx)
 
-    n[Nx÷2+1:end] .= 0.001
-    P[Nx÷2+1:end] .= 0.001
+    n[Nx÷2+1:end] .= 0.125
+    P[Nx÷2+1:end] .= 0.1
 
-    S = HydroState(n,P,v)
-
-    return S
+    return HydroState(n, P, v)
 end
 
-function hydro_rhs!(du,u, p, t)
-    dx , Nx = p
-    #println(t)
-    # Flux storage
-    F1 = zeros(Nx-1)
-    F2 = zeros(Nx-1)
-    F3 = zeros(Nx-1)
+# -------------------------
+# Time Integration (Tsit5)
+# -------------------------
+
+function hydro_rhs!(du, u, p, t)
+    dx, Nx = p
+
+    F1, F2, F3 = zeros(Nx-1), zeros(Nx-1), zeros(Nx-1)
 
     Q1 = u[1:Nx]
     Q2 = u[Nx+1:2Nx]
     Q3 = u[2Nx+1:3Nx]
 
     for i in 1:Nx-1
-        Q1_L, Q2_L, Q3_L = Q1[i], Q2[i], Q3[i]
-        Q1_R, Q2_R, Q3_R = Q1[i+1], Q2[i+1], Q3[i+1]
-        F1[i], F2[i], F3[i] = rusanov_flux(Q1_L, Q2_L, Q3_L, Q1_R, Q2_R, Q3_R)
+        F1[i], F2[i], F3[i] = rusanov_flux(Q1[i], Q2[i], Q3[i], Q1[i+1], Q2[i+1], Q3[i+1])
     end
 
     @inbounds @simd for i in 2:Nx-1
-        du[i]           = -1 / dx * (F1[i] - F1[i-1])
-        du[Nx + i]      = -1 / dx * (F2[i] - F2[i-1])
-        du[2*Nx + i]    = -1 / dx * (F3[i] - F3[i-1])
+        du[i]        = -1 / dx * (F1[i] - F1[i-1])
+        du[Nx+i]     = -1 / dx * (F2[i] - F2[i-1])
+        du[2Nx + i]  = -1 / dx * (F3[i] - F3[i-1])
     end
 
-    return nothing#Q1,Q2,Q3
+    return nothing
 end
 
 function solve_system_Tsit5(Nx)
     L = 1.0
     dx = L / Nx
     t_final = 0.2
-    initial_state = initialize_state(Nx)
-    Q1,Q2,Q3 = conserved_from_state(initial_state)
 
+    init = initialize_state(Nx)
+    Q1, Q2, Q3 = conserved_from_state(init)
 
-    u0 = vcat(Q1, Q2, Q3)  # Store all variables in a single vector
-    tspan = (0.0, t_final)
-    #state_time = StateTimeDerivatives(0.0)
-    p = (dx,Nx)
-    prob = ODEProblem(hydro_rhs!, u0, tspan, p)
+    u0 = vcat(Q1, Q2, Q3)
+    prob = ODEProblem(hydro_rhs!, u0, (0.0, t_final), (dx, Nx))
     sol = solve(prob, Tsit5(); reltol=1e-12, abstol=1e-12)
-    u1 = []
-    u2 = []
-    u3 = []
-    num_steps = length(sol.t)
 
-    for i in 1:num_steps
-        u = sol.u[i]
-        ee = u[1:Nx]
-        n = u[Nx+1:2Nx]
-        Q = u[2Nx+1:3Nx]
-        u1_i, u2_i, u3_i =  primitive_from_conserved(ee, n, Q)
-        push!(u1, u1_i)
-        push!(u2, u2_i)
-        push!(u3, u3_i)
+    u1, u2, u3 = [], [], []
+
+    for u in sol.u
+        n, P, v = primitive_from_conserved(u[1:Nx], u[Nx+1:2Nx], u[2Nx+1:3Nx])
+        push!(u1, n); push!(u2, P); push!(u3, v)
     end
 
-    return [sol.t,u1,u2,u3]
+    return [sol.t, u1, u2, u3]
 end
 
+
+# --------------------------
+# First-Order Euler Method
+# --------------------------
+
 function sound_speed_squared(e, Pval)
-    #P = eos.(e)  # Compute pressure from EOS
-    delta_e = 1e-6 .* e  # Small perturbation for numerical derivative
-    dPde = (P.(e .+ delta_e) .- Pval) ./ delta_e  # Finite difference
+    δe = 1e-6 .* e
+    dPde = (P.(e .+ δe) .- Pval) ./ δe
     return dPde
 end
 
@@ -253,19 +257,34 @@ function relativistic_wave_speeds(v, cs)
 end
 
 function compute_dt(Q1, Q2, Q3, dx, CFL)
-    # Extract state variables without looping
-    n, Px, v = primitive_from_conserved(Q1, Q2, Q3)
-
-    # Compute sound speed squared (ensure it's vectorized)
-    cs = sqrt.(sound_speed_squared.(e(Px), Px))
-
-    # Compute signal speeds for all cells
+    n, P, v = primitive_from_conserved(Q1, Q2, Q3)
+    cs = sqrt.(sound_speed_squared.(e(P), P))
     λ_plus, λ_minus = relativistic_wave_speeds.(v, cs)
-
-    # Maximum wave speed across the domain
     Smax = maximum(max.(abs.(λ_plus), abs.(λ_minus)))
-
     return CFL * dx / Smax
+end
+
+function first_order_euler_time_step(Q1,Q2,Q3, dx, dt)
+    Nx = length(Q1)
+
+    # Flux storage
+    F1 = zeros(Nx-1)
+    F2 = zeros(Nx-1)
+    F3 = zeros(Nx-1)
+
+    @inbounds @simd for i in 1:Nx-1
+        Q1_L, Q2_L, Q3_L = Q1[i], Q2[i], Q3[i]
+        Q1_R, Q2_R, Q3_R = Q1[i+1], Q2[i+1], Q3[i+1]
+        F1[i], F2[i], F3[i] = rusanov_flux(Q1_L, Q2_L, Q3_L, Q1_R, Q2_R, Q3_R)
+    end
+
+    @inbounds @simd for i in 2:Nx-1
+        Q1[i] -= dt / dx * (F1[i] - F1[i-1])
+        Q2[i] -= dt / dx * (F2[i] - F2[i-1])
+        Q3[i] -= dt / dx * (F3[i] - F3[i-1])
+    end
+
+    return Q1,Q2,Q3
 end
 
 function solve_system_euler(Nx)
@@ -293,8 +312,31 @@ function solve_system_euler(Nx)
     return result
 end
 
-Nx = 50
-result_tsit5_rusanov_relativistic       = solve_system_Tsit5(Nx)
-result_1Euler_rusanov_relativistic       = solve_system_euler(Nx)
+
+# ------------------------
+# Run Simulations
+# ------------------------
+
+Nx = 60
+
+# Solve using Tsit5 adaptive RK
+result_tsit5_rusanov_relativistic = solve_system_Tsit5(Nx)
+
+# Solve using first-order Euler with CFL
+result_1Euler_rusanov_relativistic = solve_system_euler(Nx)
+
+# Result now holds time and (n, P, v) histories
 result_tsit5_rusanov_relativistic
 result_1Euler_rusanov_relativistic
+
+# ------------------------
+# Plotting Results
+# ------------------------
+
+include("plotting.jl")
+result_1Euler_rusanov_relativistic_matched = match_time_series(result_tsit5_rusanov_relativistic[1], result_1Euler_rusanov_relativistic)
+result_1Euler_rusanov_relativistic_matched
+
+result_vector = [result_tsit5_rusanov_relativistic, result_1Euler_rusanov_relativistic_matched]
+string_vector = ["Tsit5 Rusanov Relativistic", "1st Order Euler Rusanov Relativistic"]
+plot_results(result_vector, string_vector; frames=40)

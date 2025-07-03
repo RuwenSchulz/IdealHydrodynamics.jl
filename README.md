@@ -19,3 +19,11 @@ A Julia package for solving 1D ideal hydrodynamics equations using finite volume
 ```julia
 using Pkg
 Pkg.add(url="https://github.com/RuwenSchulz/IdealHydrodynamics.jl")
+
+---
+## Example Output
+
+Here is an example result of the Sod shock tube simulation:
+
+![Shock tube simulation](https://github.com/RuwenSchulz/IdealHydrodynamics.jl/preview/sod_shock.png)
+
