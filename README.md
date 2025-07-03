@@ -19,6 +19,7 @@ A Julia package for solving 1D ideal hydrodynamics equations using finite volume
 ```julia
 using Pkg
 Pkg.add(url="https://github.com/RuwenSchulz/IdealHydrodynamics.jl")
+```
 
 ---
 ## Example Output
